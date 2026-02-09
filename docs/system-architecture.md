@@ -126,17 +126,19 @@ graph TB
     FarcasterIndexer --> PostgreSQL
 
     %% Real-time events
-    WebSocket --> BackendServices
-    BackendServices --> AnalyticsEvents
+    WebSocket --> Gateway
 
     %% Analytics
     Gateway --> AnalyticsEvents
-    Workers --> AnalyticsEvents
+    SolanaIndexer --> AnalyticsEvents
+    AIWorkers --> AnalyticsEvents
+    AutoWorkers --> AnalyticsEvents
+    FarcasterIndexer --> AnalyticsEvents
 ```
 
 ## Architecture Assumptions
 
-Based on the specifications from `Builder_Master_full_specs_Architecture.md` and `SUPPER_FULL_ARCHITECTURE.md`, the following technical decisions and assumptions guide this architecture:
+Based on the current AiNFT system requirements and implementation planning documents (including this architecture document and `IMPLEMENTATION_PLAN.md`), the following technical decisions and assumptions guide this architecture:
 
 ### Frontend Stack
 - **Framework**: Vue 3 (Composition API)

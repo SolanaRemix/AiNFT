@@ -618,7 +618,7 @@ Each PR should include or update the following workflows:
 6. **Spec Lint** (`.github/workflows/spec-lint.yml`)
    - Verify routes match architecture
    - Check composable/component stubs exist
-   - Validate against IMPLEMENTATION_PLAN.md
+   - Validate against docs/IMPLEMENTATION_PLAN.md
 
 ### Pull Request Template
 
