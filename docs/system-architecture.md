@@ -570,8 +570,8 @@ sequenceDiagram
 - **CORS**: Strict origin validation for API requests
 
 #### Authentication
-- **JWT Access Tokens**: Short-lived (15 min), stateless
-- **Refresh Tokens**: Long-lived (7 days), stored in Redis
+- **JWT Access Tokens**: Short-lived (15 min default, configurable via `JWT_ACCESS_TOKEN_TTL` env var), stateless
+- **Refresh Tokens**: Long-lived (7 days default, configurable via `JWT_REFRESH_TOKEN_TTL` env var), stored in Redis. Duration should be adjusted based on security requirements and can be shortened for high-security operations.
 - **Wallet Signatures**: Cryptographic proof of wallet ownership
 - **Session Management**: Redis-backed session store with expiration
 
@@ -707,15 +707,15 @@ CMD ["npm", "run", "start:prod"]
 
 ### Performance Targets
 
-| Metric | Target | Measurement |
-|--------|--------|-------------|
-| Time to Interactive | < 3 seconds | Lighthouse |
-| First Contentful Paint | < 1.5 seconds | Core Web Vitals |
-| API Response Time (p95) | < 300ms | APM |
-| WebSocket Latency | < 100ms | Custom metrics |
-| Database Query Time (p95) | < 50ms | APM |
-| AI Generation Job | < 30 seconds | Job queue metrics |
-| Blockchain Transaction | < 2 seconds | Solana confirmation |
+| Metric | Target | Measurement | Notes |
+|--------|--------|-------------|-------|
+| Time to Interactive | < 3 seconds | Lighthouse | Target for initial page load on cable/LTE connections. Complex pages may have relaxed targets. |
+| First Contentful Paint | < 1.5 seconds | Core Web Vitals | Initial render performance |
+| API Response Time (p95) | < 300ms | APM | Excludes long-running operations |
+| WebSocket Latency | < 100ms | Custom metrics | Round-trip message time |
+| Database Query Time (p95) | < 50ms | APM | Single query execution time |
+| AI Generation Job | < 30 seconds | Job queue metrics | For single image generation |
+| Blockchain Transaction | < 2 seconds | Solana confirmation | Refers to "processed" confirmation level. "Confirmed" ~400ms, "Finalized" ~12-13s. |
 
 ### Scalability Targets
 
