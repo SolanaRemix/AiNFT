@@ -462,6 +462,378 @@ The following checklist outlines the scaffolding work to be completed in follow-
 - [ ] Set up log aggregation
 - [ ] Create operational dashboards
 
+## Database Schema Overview
+
+### Core Entities
+
+The following entities represent the primary data models in PostgreSQL:
+
+#### User & Authentication
+- **users**: User accounts with wallet addresses, email, roles, created_at
+- **sessions**: Active user sessions with JWT tokens and expiration
+- **wallets**: Connected Solana wallets per user (one-to-many)
+
+#### Studios & Content
+- **studios**: Creator workspaces with handle, name, owner_id, settings
+- **collections**: NFT collections with metadata, studio_id, blockchain references
+- **nfts**: Individual NFTs with metadata, collection_id, mint address, status
+- **assets**: Digital assets (images, videos) with storage URLs and metadata
+
+#### AI & Generation
+- **ai_jobs**: AI generation job queue with status, prompt, model, results
+- **ai_agents**: Configured AI agents with parameters and presets
+- **prompts**: Saved prompt templates for AI generation
+
+#### Marketplace & Trading
+- **listings**: NFT marketplace listings with price, seller, status
+- **trades**: Trade history with buyer, seller, price, timestamp
+- **offers**: Buy offers on NFTs with price and expiration
+
+#### DAO & Governance
+- **daos**: DAO entities linked to studios with token info, treasury
+- **proposals**: Governance proposals with description, voting period
+- **votes**: Individual votes on proposals with voting power
+- **tokens**: SPL tokens for governance and utility
+
+#### Sponsorships & Growth
+- **sponsors**: Sponsor profiles with company info, budget
+- **agreements**: Sponsorship agreements with terms, duration, status
+- **campaigns**: Marketing campaigns with goals, metrics
+- **automation_rules**: Workflow automation rules and triggers
+
+#### Social & Indexing
+- **farcaster_casts**: Indexed Farcaster posts
+- **farcaster_profiles**: Farcaster user profiles
+- **activity_feed**: Platform activity events
+- **notifications**: User notifications
+
+#### Blockchain Indexing
+- **solana_transactions**: Indexed on-chain transactions
+- **mint_events**: NFT mint events from blockchain
+- **transfer_events**: NFT transfer events from blockchain
+
+### Relationships
+
+```
+users (1) ─┬─ (N) studios
+           ├─ (N) wallets
+           ├─ (N) sessions
+           └─ (N) notifications
+
+studios (1) ─┬─ (N) collections
+             ├─ (1) daos
+             ├─ (N) agreements
+             └─ (N) campaigns
+
+collections (1) ─── (N) nfts
+
+nfts (1) ─┬─ (N) listings
+          ├─ (N) trades
+          └─ (N) offers
+
+daos (1) ─┬─ (N) proposals
+          └─ (N) tokens
+
+proposals (1) ─── (N) votes
+```
+
+## Security Architecture
+
+### Authentication Flow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Frontend
+    participant Gateway
+    participant Auth
+    participant Wallet
+    participant Redis
+    
+    User->>Frontend: Connect Wallet
+    Frontend->>Wallet: Request Signature
+    Wallet->>Frontend: Return Signed Message
+    Frontend->>Gateway: POST /auth/wallet
+    Gateway->>Auth: Verify Signature
+    Auth->>Auth: Validate Wallet Address
+    Auth->>Redis: Store Session
+    Auth->>Gateway: Return JWT + Refresh Token
+    Gateway->>Frontend: Auth Tokens
+    Frontend->>Frontend: Store in HttpOnly Cookie
+```
+
+### Security Layers
+
+#### Transport Security
+- **HTTPS/TLS 1.3**: All API communication encrypted
+- **WebSocket Secure (WSS)**: Encrypted real-time connections
+- **CORS**: Strict origin validation for API requests
+
+#### Authentication
+- **JWT Access Tokens**: Short-lived (15 min default, configurable via `JWT_ACCESS_TOKEN_TTL` env var), stateless
+- **Refresh Tokens**: Long-lived (7 days default, configurable via `JWT_REFRESH_TOKEN_TTL` env var), stored in Redis. Duration should be adjusted based on security requirements and can be shortened for high-security operations.
+- **Wallet Signatures**: Cryptographic proof of wallet ownership
+- **Session Management**: Redis-backed session store with expiration
+
+#### Authorization
+- **Role-Based Access Control (RBAC)**: User, Creator, Admin roles
+- **Resource-Level Permissions**: Ownership-based access to studios, collections
+- **API Rate Limiting**: Per-user and per-IP rate limits via Redis
+- **Scope-Based Tokens**: Limited token scopes for different operations
+
+#### Data Protection
+- **Secrets Management**: Environment variables for API keys, never in code
+- **Database Encryption**: Encrypted at rest (PostgreSQL encryption)
+- **Sensitive Data**: PII encrypted with application-level encryption
+- **Audit Logging**: All sensitive operations logged with user context
+
+#### Smart Contract Security
+- **Transaction Simulation**: Pre-flight simulation before signing
+- **Multi-Signature**: Multi-sig wallets for treasury management
+- **Fee Limits**: Maximum fee caps to prevent drain attacks
+- **Slippage Protection**: Price slippage limits on trades
+
+#### API Security
+- **Input Validation**: All inputs validated and sanitized
+- **SQL Injection Prevention**: Parameterized queries only
+- **XSS Prevention**: Content Security Policy (CSP) headers
+- **CSRF Protection**: CSRF tokens for state-changing operations
+
+### Threat Mitigation
+
+| Threat | Mitigation |
+|--------|-----------|
+| Wallet Drain | Transaction simulation, fee caps, user confirmation |
+| Account Takeover | Multi-factor auth, wallet signature verification |
+| DDoS | Rate limiting, CDN protection, auto-scaling |
+| SQL Injection | Parameterized queries, ORM usage |
+| XSS | CSP headers, input sanitization, output encoding |
+| CSRF | SameSite cookies, CSRF tokens |
+| API Abuse | Rate limiting, API key rotation, monitoring |
+| Data Breach | Encryption at rest/transit, access controls |
+
+## Deployment Architecture
+
+### Infrastructure Stack
+
+```
+┌─────────────────────────────────────────────┐
+│             CDN (Cloudflare/Vercel)         │
+│         Static Assets + Edge Caching        │
+└─────────────────┬───────────────────────────┘
+                  │
+┌─────────────────▼───────────────────────────┐
+│         Load Balancer (Vercel/AWS ALB)      │
+└─────────────────┬───────────────────────────┘
+                  │
+        ┌─────────┴─────────┐
+        │                   │
+┌───────▼─────┐   ┌────────▼────────┐
+│  Frontend   │   │  API Gateway    │
+│  (Vercel)   │   │  (Containers)   │
+└─────────────┘   └────────┬────────┘
+                           │
+        ┌──────────────────┼──────────────────┐
+        │                  │                  │
+┌───────▼────┐  ┌─────────▼───┐  ┌──────────▼────┐
+│  Backend   │  │   Workers   │  │   Solana RPC  │
+│  Services  │  │  (Async)    │  │   Provider    │
+│(Containers)│  │(Containers) │  │  (External)   │
+└──────┬─────┘  └──────┬──────┘  └───────────────┘
+       │               │
+       └───────┬───────┘
+               │
+    ┌──────────┴──────────┐
+    │                     │
+┌───▼────┐        ┌───────▼────┐
+│ PostgreSQL│     │   Redis     │
+│ (Managed) │     │ (Managed)   │
+└───────────┘     └─────────────┘
+```
+
+### Deployment Environments
+
+#### Development
+- **Frontend**: Vite dev server with HMR
+- **Backend**: Local Docker Compose
+- **Database**: Local PostgreSQL container
+- **Blockchain**: Solana Devnet or local validator
+
+#### Staging
+- **Frontend**: Vercel preview deployment
+- **Backend**: Kubernetes cluster (dev namespace)
+- **Database**: Managed PostgreSQL (development tier)
+- **Blockchain**: Solana Devnet
+
+#### Production
+- **Frontend**: Vercel production with edge caching
+- **Backend**: Kubernetes cluster (production namespace)
+- **Database**: Managed PostgreSQL with replication
+- **Blockchain**: Solana Mainnet with multiple RPC providers
+
+### Container Strategy
+
+All backend services and workers are containerized:
+
+```dockerfile
+# Example structure for backend services
+FROM node:20-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+RUN npm run build
+CMD ["npm", "run", "start:prod"]
+```
+
+### Scaling Strategy
+
+#### Horizontal Scaling
+- **Frontend**: Edge caching via CDN, auto-scaled serverless functions
+- **API Gateway**: Auto-scaling replicas based on CPU/memory
+- **Backend Services**: Independent scaling per service
+- **Workers**: Queue-based scaling based on job backlog
+
+#### Vertical Scaling
+- **Database**: Increase instance size for write-heavy loads
+- **Redis**: Increase memory for larger cache requirements
+
+#### Database Scaling
+- **Read Replicas**: Separate read replicas for analytics queries
+- **Connection Pooling**: PgBouncer for connection management
+- **Partitioning**: Time-based partitioning for event tables
+
+## Performance & Scalability
+
+### Performance Targets
+
+| Metric | Target | Measurement | Notes |
+|--------|--------|-------------|-------|
+| Time to Interactive | < 3 seconds | Lighthouse | Target for initial page load on cable/LTE connections. Complex pages may have relaxed targets. |
+| First Contentful Paint | < 1.5 seconds | Core Web Vitals | Initial render performance |
+| API Response Time (p95) | < 300ms | APM | Excludes long-running operations |
+| WebSocket Latency | < 100ms | Custom metrics | Round-trip message time |
+| Database Query Time (p95) | < 50ms | APM | Single query execution time |
+| AI Generation Job | < 30 seconds | Job queue metrics | For single image generation |
+| Blockchain Transaction | < 2 seconds | Solana confirmation | Refers to "processed" confirmation level. "Confirmed" ~400ms, "Finalized" ~12-13s. |
+
+### Scalability Targets
+
+| Resource | Target Capacity | Scale Strategy |
+|----------|----------------|----------------|
+| Concurrent Users | 10,000+ | Horizontal scaling |
+| API Requests | 1,000 req/sec | Load balancing + caching |
+| NFT Mints per Day | 100,000+ | Batch processing + queue |
+| AI Generation Jobs | 500/hour | Worker pool scaling |
+| Blockchain Indexing | 1,000 tx/sec | Parallel processing |
+| Database Connections | 500+ | Connection pooling |
+| Storage | 10TB+ | Distributed storage |
+
+### Caching Strategy
+
+#### Frontend Caching
+- **Static Assets**: CDN caching with long TTL (1 year)
+- **API Responses**: Vue Query caching (5-60 seconds)
+- **Images**: CDN + browser cache
+
+#### Backend Caching
+- **API Gateway**: Redis cache for frequent queries (1-5 minutes)
+- **Database Queries**: Redis cache for expensive joins (1-10 minutes)
+- **Blockchain Data**: Redis cache for RPC responses (30 seconds)
+- **User Sessions**: Redis session store
+
+#### Cache Invalidation
+- **Time-Based**: TTL expiration for most cached data
+- **Event-Based**: Invalidate on data mutations (create, update, delete)
+- **Manual**: Admin tools for cache clearing
+
+### Optimization Strategies
+
+#### Frontend Optimization
+- **Code Splitting**: Route-based code splitting
+- **Lazy Loading**: Components and images loaded on demand
+- **Bundle Size**: Tree shaking and minification
+- **Image Optimization**: WebP format, responsive images
+
+#### Backend Optimization
+- **Query Optimization**: Indexed database queries, N+1 prevention
+- **Batch Operations**: Bulk inserts and updates
+- **Async Processing**: Long-running tasks in worker queues
+- **Compression**: Gzip/Brotli for API responses
+
+#### Blockchain Optimization
+- **Transaction Batching**: Combine multiple operations
+- **Compressed NFTs**: Use Bubblegum for cost efficiency
+- **RPC Caching**: Cache blockchain queries aggressively
+- **Parallel Requests**: Concurrent RPC calls where possible
+
+## Monitoring & Observability
+
+### Metrics Collection
+
+#### Application Metrics
+- **Request Rate**: Requests per second by endpoint
+- **Response Time**: P50, P95, P99 latencies
+- **Error Rate**: 4xx and 5xx response rates
+- **Throughput**: Data transfer rates
+
+#### Business Metrics
+- **NFT Mints**: Mints per hour/day
+- **Active Users**: DAU/MAU counts
+- **Revenue**: Transaction fees collected
+- **Conversion Rates**: Signup to mint conversion
+
+#### Infrastructure Metrics
+- **CPU Usage**: Per service and aggregate
+- **Memory Usage**: Heap size and RSS
+- **Disk I/O**: Read/write operations
+- **Network I/O**: Bytes sent/received
+
+### Logging Strategy
+
+#### Log Levels
+- **DEBUG**: Development-only detailed logs
+- **INFO**: Normal operational events
+- **WARN**: Unusual but handled conditions
+- **ERROR**: Error conditions requiring attention
+- **FATAL**: Critical failures requiring immediate action
+
+#### Log Aggregation
+- Centralized logging via Elasticsearch or similar
+- Structured JSON logging for parsing
+- Correlation IDs for request tracing
+- Sensitive data redaction
+
+### Alerting
+
+#### Critical Alerts (Immediate Response)
+- API gateway down
+- Database connection failures
+- High error rates (>5%)
+- Solana RPC failures
+
+#### Warning Alerts (Monitor)
+- High response times (>1s p95)
+- Memory usage >80%
+- Disk usage >75%
+- Failed worker jobs >10%
+
+### Distributed Tracing
+
+- End-to-end request tracing across services
+- Trace ID propagation through headers
+- Span timing for each service operation
+- Error and exception tracking in traces
+
 ## Conclusion
 
-This architecture provides a solid foundation for the AiNFT platform, balancing scalability, maintainability, and feature richness. The modular design allows for independent development and deployment of services while maintaining clear integration points. As the platform evolves, this architecture can be refined based on actual usage patterns and performance requirements.
+This architecture provides a solid foundation for the AiNFT platform, balancing scalability, maintainability, and feature richness. The modular design allows for independent development and deployment of services while maintaining clear integration points. 
+
+The enhanced sections on database schema, security, deployment, and performance provide concrete targets and patterns for implementation. As the platform evolves, this architecture can be refined based on actual usage patterns and performance requirements.
+
+Key strengths of this architecture:
+- **Modular**: Independent services can be developed and deployed separately
+- **Scalable**: Horizontal scaling for all critical components
+- **Secure**: Multiple layers of security from transport to data
+- **Observable**: Comprehensive monitoring and alerting
+- **Maintainable**: Clear separation of concerns and documented patterns
