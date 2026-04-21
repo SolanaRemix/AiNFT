@@ -25,4 +25,12 @@ export default tseslint.config(
       'vue/singleline-html-element-content-newline': 'off',
     },
   },
+  {
+    files: ['src/tests/**/*.test.ts'],
+    languageOptions: {
+      globals: {
+        ...globals.vitest,
+      },
+    },
+  },
 )
